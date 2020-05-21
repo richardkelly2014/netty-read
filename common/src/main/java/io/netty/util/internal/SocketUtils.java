@@ -160,9 +160,6 @@ public final class SocketUtils {
                         return intf.getInetAddresses();
                     }
                 });
-        // Android seems to sometimes return null even if this is not a valid return value by the api docs.
-        // Just return an empty Enumeration in this case.
-        // See https://github.com/netty/netty/issues/10045
         if (addresses == null) {
             return empty();
         }
@@ -173,15 +170,15 @@ public final class SocketUtils {
         return AccessController.doPrivileged(new PrivilegedAction<InetAddress>() {
             @Override
             public InetAddress run() {
-                // todo 1
-                //if (PlatformDependent.javaVersion() >= 7) {
-                return InetAddress.getLoopbackAddress();
-                //}
-//                try {
-//                    return InetAddress.getByName(null);
-//                } catch (UnknownHostException e) {
-//                    throw new IllegalStateException(e);
-//                }
+
+                if (PlatformDependent.javaVersion() >= 7) {
+                    return InetAddress.getLoopbackAddress();
+                }
+                try {
+                    return InetAddress.getByName(null);
+                } catch (UnknownHostException e) {
+                    throw new IllegalStateException(e);
+                }
             }
         });
     }

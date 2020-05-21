@@ -1,5 +1,6 @@
 package io.netty.util;
 
+import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SocketUtils;
 import io.netty.util.internal.SystemPropertyUtil;
 
