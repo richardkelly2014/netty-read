@@ -53,8 +53,7 @@ public final class NetUtil {
         try {
             localhost4 = (Inet4Address) InetAddress.getByAddress("localhost", LOCALHOST4_BYTES);
         } catch (Exception e) {
-            //todo We should not get here as long as the length of the address is correct.
-            // PlatformDependent.throwException(e);
+            PlatformDependent.throwException(e);
         }
         LOCALHOST4 = localhost4;
 
@@ -63,8 +62,7 @@ public final class NetUtil {
         try {
             localhost6 = (Inet6Address) InetAddress.getByAddress("localhost", LOCALHOST6_BYTES);
         } catch (Exception e) {
-            //todo We should not get here as long as the length of the address is correct.
-            // PlatformDependent.throwException(e);
+            PlatformDependent.throwException(e);
         }
         LOCALHOST6 = localhost6;
 

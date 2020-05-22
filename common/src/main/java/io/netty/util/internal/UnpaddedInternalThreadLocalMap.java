@@ -20,6 +20,8 @@ class UnpaddedInternalThreadLocalMap {
     int localChannelReaderStackDepth;
     Map<Class<?>, Boolean> handlerSharableCache;
 
+    StringBuilder stringBuilder;
+
     ArrayList<Object> arrayList;
 
     UnpaddedInternalThreadLocalMap(Object[] indexedVariables) {
