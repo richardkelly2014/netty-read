@@ -196,6 +196,14 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         return list;
     }
 
+    public int futureListenerStackDepth() {
+        return futureListenerStackDepth;
+    }
+
+    public void setFutureListenerStackDepth(int futureListenerStackDepth) {
+        this.futureListenerStackDepth = futureListenerStackDepth;
+    }
+
     /**
      * 获取索引位置
      *
