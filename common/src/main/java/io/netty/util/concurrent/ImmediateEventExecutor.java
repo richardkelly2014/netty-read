@@ -56,6 +56,10 @@ public class ImmediateEventExecutor extends AbstractEventExecutor {
     }
 
     @Override
+    @Deprecated
+    public void shutdown() { }
+
+    @Override
     public boolean isShuttingDown() {
         return false;
     }

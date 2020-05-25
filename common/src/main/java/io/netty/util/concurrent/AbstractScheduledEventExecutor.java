@@ -83,6 +83,37 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
         scheduledTaskQueue.clearIgnoringIndexes();
     }
 
+    protected final Runnable pollScheduledTask() {
+        return pollScheduledTask(nanoTime());
+    }
+    
+    protected final Runnable pollScheduledTask(long nanoTime) {
+        assert inEventLoop();
+
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
+            return null;
+        }
+        scheduledTaskQueue.remove();
+        scheduledTask.setConsumed();
+        return scheduledTask;
+    }
+
+    protected final long nextScheduledTaskNano() {
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        return scheduledTask != null ? scheduledTask.delayNanos() : -1;
+    }
+
+    protected final long nextScheduledTaskDeadlineNanos() {
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        return scheduledTask != null ? scheduledTask.deadlineNanos() : -1;
+    }
+
+    final ScheduledFutureTask<?> peekScheduledTask() {
+        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+        return scheduledTaskQueue != null ? scheduledTaskQueue.peek() : null;
+    }
+
     //提交任务
     @Override
     public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {

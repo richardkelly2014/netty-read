@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RunnableFuture;
@@ -53,6 +54,17 @@ public abstract class AbstractEventExecutor extends AbstractExecutorService impl
     @Override
     public Future<?> shutdownGracefully() {
         return shutdownGracefully(DEFAULT_SHUTDOWN_QUIET_PERIOD, DEFAULT_SHUTDOWN_TIMEOUT, TimeUnit.SECONDS);
+    }
+
+    @Override
+    @Deprecated
+    public abstract void shutdown();
+
+    @Override
+    @Deprecated
+    public List<Runnable> shutdownNow() {
+        shutdown();
+        return Collections.emptyList();
     }
 
     @Override
