@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 
 /**
  * Created by jiangfei on 2020/5/21.
@@ -20,6 +21,7 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
     private static final int INDEXED_VARIABLE_TABLE_INITIAL_SIZE = 32;
     // 未设置
     public static final Object UNSET = new Object();
+    private BitSet cleanerFlags;
 
     static {
         STRING_BUILDER_INITIAL_SIZE =
