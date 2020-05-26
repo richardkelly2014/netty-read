@@ -108,4 +108,64 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     protected Queue<Runnable> newTaskQueue(int maxPendingTasks) {
         return new LinkedBlockingQueue<Runnable>(maxPendingTasks);
     }
+
+
+    @Override
+    public void execute(Runnable task) {
+        ObjectUtil.checkNotNull(task, "task");
+        execute(task, !(task instanceof LazyRunnable) && wakesUpForTask(task));
+    }
+
+
+    protected boolean wakesUpForTask(Runnable task) {
+        return true;
+    }
+
+    private static final class DefaultThreadProperties implements ThreadProperties {
+        private final Thread t;
+
+        DefaultThreadProperties(Thread t) {
+            this.t = t;
+        }
+
+        @Override
+        public Thread.State state() {
+            return t.getState();
+        }
+
+        @Override
+        public int priority() {
+            return t.getPriority();
+        }
+
+        @Override
+        public boolean isInterrupted() {
+            return t.isInterrupted();
+        }
+
+        @Override
+        public boolean isDaemon() {
+            return t.isDaemon();
+        }
+
+        @Override
+        public String name() {
+            return t.getName();
+        }
+
+        @Override
+        public long id() {
+            return t.getId();
+        }
+
+        @Override
+        public StackTraceElement[] stackTrace() {
+            return t.getStackTrace();
+        }
+
+        @Override
+        public boolean isAlive() {
+            return t.isAlive();
+        }
+    }
 }
