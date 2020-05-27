@@ -1,13 +1,12 @@
 package io.netty.util.concurrent;
 
 import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SystemPropertyUtil;
 import io.netty.util.internal.ThreadExecutorMap;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.LinkedHashSet;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -106,9 +105,84 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         return new LinkedBlockingQueue<Runnable>(maxPendingTasks);
     }
 
-    //取出任务
-    protected Runnable takeTask() {
+    protected Runnable pollTask() {
+        assert inEventLoop();
+        return pollTaskFrom(taskQueue);
+    }
 
+    protected static Runnable pollTaskFrom(Queue<Runnable> taskQueue) {
+        for (; ; ) {
+            Runnable task = taskQueue.poll();
+            if (task != WAKEUP_TASK) {
+                return task;
+            }
+        }
+    }
+
+    //取出任务
+    //必须在工作线程中操作
+    protected Runnable takeTask() {
+        assert inEventLoop();
+        if (!(taskQueue instanceof BlockingQueue)) {
+            throw new UnsupportedOperationException();
+        }
+
+        BlockingQueue<Runnable> taskQueue = (BlockingQueue<Runnable>) this.taskQueue;
+
+        for (; ; ) {
+            //取一个延迟任务
+            ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+            if (scheduledTask == null) {
+                Runnable task = null;
+                try {
+                    task = taskQueue.take();
+                    if (task == WAKEUP_TASK) {
+                        task = null;
+                    }
+                } catch (InterruptedException e) {
+                    // Ignore
+                }
+                return task;
+            } else {
+                long delayNanos = scheduledTask.delayNanos();
+                Runnable task = null;
+                if (delayNanos > 0) {
+                    try {
+                        task = taskQueue.poll(delayNanos, TimeUnit.NANOSECONDS);
+                    } catch (InterruptedException e) {
+                        // Waken up.
+                        return null;
+                    }
+                }
+                if (task == null) {
+                    fetchFromScheduledTaskQueue();
+                    task = taskQueue.poll();
+                }
+
+                if (task != null) {
+                    return task;
+                }
+            }
+        }
+    }
+
+    //从延迟任务队列取，放入本地queue
+    private boolean fetchFromScheduledTaskQueue() {
+        if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty()) {
+            return true;
+        }
+        long nanoTime = AbstractScheduledEventExecutor.nanoTime();
+        for (; ; ) {
+            Runnable scheduledTask = pollScheduledTask(nanoTime);
+            if (scheduledTask == null) {
+                return true;
+            }
+            if (!taskQueue.offer(scheduledTask)) {
+                // No space left in the task queue add it back to the scheduledTaskQueue so we pick it up again.
+                scheduledTaskQueue.add((ScheduledFutureTask<?>) scheduledTask);
+                return false;
+            }
+        }
     }
 
     //必须在工作线程中操作
@@ -145,6 +219,46 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         return taskQueue.remove(ObjectUtil.checkNotNull(task, "task"));
     }
 
+    //执行所有任务
+    //必须在工作线程中操作
+    protected boolean runAllTasks() {
+        assert inEventLoop();
+        boolean fetchedAll;
+        boolean ranAtLeastOne = false;
+
+        do {
+            fetchedAll = fetchFromScheduledTaskQueue();
+            if (runAllTasksFrom(taskQueue)) {
+                ranAtLeastOne = true;
+            }
+        } while (!fetchedAll); // keep on processing until we fetched all scheduled tasks.
+
+        if (ranAtLeastOne) {
+            lastExecutionTime = ScheduledFutureTask.nanoTime();
+        }
+        afterRunningAllTasks();
+        return ranAtLeastOne;
+    }
+
+    protected final boolean runAllTasksFrom(Queue<Runnable> taskQueue) {
+        Runnable task = pollTaskFrom(taskQueue);
+        if (task == null) {
+            return false;
+        }
+        for (; ; ) {
+            //执行
+            safeExecute(task);
+            task = pollTaskFrom(taskQueue);
+            if (task == null) {
+                return true;
+            }
+        }
+    }
+
+    protected void afterRunningAllTasks() {
+    }
+
+
     protected void updateLastExecutionTime() {
         //最新执行时间
         lastExecutionTime = ScheduledFutureTask.nanoTime();
@@ -173,6 +287,166 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     @Override
     public boolean inEventLoop(Thread thread) {
         return thread == this.thread;
+    }
+
+    public void addShutdownHook(final Runnable task) {
+        if (inEventLoop()) {
+            shutdownHooks.add(task);
+        } else {
+            execute(new Runnable() {
+                @Override
+                public void run() {
+                    shutdownHooks.add(task);
+                }
+            });
+        }
+    }
+
+    public void removeShutdownHook(final Runnable task) {
+        if (inEventLoop()) {
+            shutdownHooks.remove(task);
+        } else {
+            execute(new Runnable() {
+                @Override
+                public void run() {
+                    shutdownHooks.remove(task);
+                }
+            });
+        }
+    }
+
+    private boolean runShutdownHooks() {
+        boolean ran = false;
+        // Note shutdown hooks can add / remove shutdown hooks.
+        while (!shutdownHooks.isEmpty()) {
+            List<Runnable> copy = new ArrayList<Runnable>(shutdownHooks);
+            shutdownHooks.clear();
+            for (Runnable task : copy) {
+                try {
+                    task.run();
+                } catch (Throwable t) {
+                    log.warn("Shutdown hook raised an exception.", t);
+                } finally {
+                    ran = true;
+                }
+            }
+        }
+
+        if (ran) {
+            lastExecutionTime = ScheduledFutureTask.nanoTime();
+        }
+
+        return ran;
+    }
+
+    @Override
+    public Future<?> shutdownGracefully(long quietPeriod, long timeout, TimeUnit unit) {
+        ObjectUtil.checkPositiveOrZero(quietPeriod, "quietPeriod");
+        if (timeout < quietPeriod) {
+            throw new IllegalArgumentException(
+                    "timeout: " + timeout + " (expected >= quietPeriod (" + quietPeriod + "))");
+        }
+        ObjectUtil.checkNotNull(unit, "unit");
+
+        if (isShuttingDown()) {
+            return terminationFuture();
+        }
+
+        boolean inEventLoop = inEventLoop();
+        boolean wakeup;
+        int oldState;
+        for (; ; ) {
+            if (isShuttingDown()) {
+                return terminationFuture();
+            }
+            int newState;
+            wakeup = true;
+            oldState = state;
+            if (inEventLoop) {
+                newState = ST_SHUTTING_DOWN;
+            } else {
+                switch (oldState) {
+                    case ST_NOT_STARTED:
+                    case ST_STARTED:
+                        newState = ST_SHUTTING_DOWN;
+                        break;
+                    default:
+                        newState = oldState;
+                        wakeup = false;
+                }
+            }
+            if (STATE_UPDATER.compareAndSet(this, oldState, newState)) {
+                break;
+            }
+        }
+        gracefulShutdownQuietPeriod = unit.toNanos(quietPeriod);
+        gracefulShutdownTimeout = unit.toNanos(timeout);
+
+        if (ensureThreadStarted(oldState)) {
+            return terminationFuture;
+        }
+
+        if (wakeup) {
+            taskQueue.offer(WAKEUP_TASK);
+            if (!addTaskWakesUp) {
+                wakeup(inEventLoop);
+            }
+        }
+
+        return terminationFuture();
+    }
+
+    @Override
+    public Future<?> terminationFuture() {
+        return terminationFuture;
+    }
+
+    @Override
+    @Deprecated
+    public void shutdown() {
+        if (isShutdown()) {
+            return;
+        }
+
+        boolean inEventLoop = inEventLoop();
+        boolean wakeup;
+        int oldState;
+        for (; ; ) {
+            if (isShuttingDown()) {
+                return;
+            }
+            int newState;
+            wakeup = true;
+            oldState = state;
+            if (inEventLoop) {
+                newState = ST_SHUTDOWN;
+            } else {
+                switch (oldState) {
+                    case ST_NOT_STARTED:
+                    case ST_STARTED:
+                    case ST_SHUTTING_DOWN:
+                        newState = ST_SHUTDOWN;
+                        break;
+                    default:
+                        newState = oldState;
+                        wakeup = false;
+                }
+            }
+            if (STATE_UPDATER.compareAndSet(this, oldState, newState)) {
+                break;
+            }
+        }
+
+        if (ensureThreadStarted(oldState)) {
+            return;
+        }
+
+        if (wakeup) {
+            taskQueue.offer(WAKEUP_TASK);
+            if (!addTaskWakesUp) {
+                wakeup(inEventLoop);
+            }
+        }
     }
 
     @Override
@@ -251,6 +525,19 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         return true;
     }
 
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+        ObjectUtil.checkNotNull(unit, "unit");
+        if (inEventLoop()) {
+            throw new IllegalStateException("cannot await termination of the current thread");
+        }
+
+        threadLock.await(timeout, unit);
+
+        return isTerminated();
+    }
+
     @Override
     public void execute(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
@@ -323,6 +610,23 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         }
     }
 
+    private boolean ensureThreadStarted(int oldState) {
+        if (oldState == ST_NOT_STARTED) {
+            try {
+                doStartThread();
+            } catch (Throwable cause) {
+                STATE_UPDATER.set(this, ST_TERMINATED);
+                terminationFuture.tryFailure(cause);
+
+                if (!(cause instanceof Exception)) {
+                    // Also rethrow as it may be an OOME for example
+                    PlatformDependent.throwException(cause);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
 
     private void doStartThread() {
         assert thread == null;
