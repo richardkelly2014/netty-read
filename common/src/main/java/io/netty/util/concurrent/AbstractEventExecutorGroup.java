@@ -1,6 +1,7 @@
 package io.netty.util.concurrent;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -82,4 +83,12 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
     public void execute(Runnable command) {
         next().execute(command);
     }
+
+    @Override
+    @Deprecated
+    public List<Runnable> shutdownNow() {
+        shutdown();
+        return Collections.emptyList();
+    }
+
 }
