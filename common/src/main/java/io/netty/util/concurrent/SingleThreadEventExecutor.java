@@ -106,6 +106,27 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         return new LinkedBlockingQueue<Runnable>(maxPendingTasks);
     }
 
+    //取出任务
+    protected Runnable takeTask() {
+
+    }
+
+    //必须在工作线程中操作
+    protected Runnable peekTask() {
+        assert inEventLoop();
+        return taskQueue.peek();
+    }
+
+    //必须在工作线程中操作
+    protected boolean hasTasks() {
+        assert inEventLoop();
+        return !taskQueue.isEmpty();
+    }
+
+    public int pendingTasks() {
+        return taskQueue.size();
+    }
+
     protected void addTask(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
         if (!offerTask(task)) {
@@ -171,6 +192,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
 
     /**
      * 确认是否关闭
+     * 必须在工作线程中操作
      *
      * @return
      */
